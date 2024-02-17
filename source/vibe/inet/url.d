@@ -321,7 +321,7 @@ struct URL {
 			lowerschema = schema.toLower();
 		catch (Exception e)
 			assert(false, e.msg);
-		
+
 		if (auto set = atomicLoad(map_commonInternetSchemas))
 			if (set.contains(lowerschema))
 				return set.get(lowerschema);
@@ -481,7 +481,7 @@ struct URL {
 			{
 				if (input.length < i + 3)
 					assert(false, "Invalid percent encoding");
-				
+
 				char conv = cast(char) input[i + 1 .. i + 3].to!ubyte(16);
 				switch (conv)
 				{
@@ -518,16 +518,17 @@ struct URL {
 			- Adding slash when path is empty
 			- Adding slash to path when path represents a directory
 			- Decoding percent encoded triplets for unreserved characters
-				A-Z a-z 0-9 - . _ ~ 
+				A-Z a-z 0-9 - . _ ~
 
 		Params:
-			isDirectory = Path of the URL represents a directory, if one is 
-			not already present, a trailing slash will be appended when `true`
+			isDirectory = Path of the URL represents a directory, if one is
+				not already present, a trailing slash will be appended when
+				`true`
 	*/
 	void normalize(bool isDirectory = false)
 	{
 		import std.uni : toLower;
-		
+
 		// Lowercase host and schema
 		this.m_schema = this.m_schema.toLower();
 		this.m_host = this.m_host.toLower();
@@ -547,7 +548,7 @@ struct URL {
 
 		// Add trailing slash to empty path
 		if (this.m_path.empty || isDirectory)
-			this.m_path.endsWithSlash = true;		
+			this.m_path.endsWithSlash = true;
 	}
 
 	/** Returns the normalized form of the URL.
@@ -834,7 +835,7 @@ private {
 	}
 
 	/*	Encodes `input` with puny encoding
-		
+
 		If input is all characters below `initial_n`
 		input is returned as is.
 
@@ -849,10 +850,10 @@ private {
 		uint b;
 		dchar m = dchar.max; // minchar
 		bool delta_overflow;
-		
+
 		uint input_len = 0;
 		auto output = appender!string();
-		
+
 		output.put("xn--");
 
 		foreach (dchar cp; input)
@@ -1106,16 +1107,16 @@ unittest { // URL Normalization
 
 	url = URL.parse("HTTP://User@Example.COM/Foo");
 	assert(url.normalized.toString() == "http://User@example.com/Foo");
-	
+
 	url = URL.parse("http://example.com/%7Efoo");
 	assert(url.normalized.toString() == "http://example.com/~foo");
-	
+
 	url = URL.parse("http://example.com/foo/./bar/baz/../qux");
 	assert(url.normalized.toString() == "http://example.com/foo/bar/qux");
-	
+
 	url = URL.parse("http://example.com");
 	assert(url.normalized.toString() == "http://example.com/");
-	
+
 	url = URL.parse("http://example.com:80/");
 	assert(url.normalized.toString() == "http://example.com/");
 
