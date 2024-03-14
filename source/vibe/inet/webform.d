@@ -13,6 +13,7 @@ import vibe.core.log;
 import vibe.core.path;
 import vibe.inet.message;
 import vibe.internal.string;
+import vibe.internal.interfaceproxy : InterfaceProxy, interfaceProxy;
 import vibe.stream.operations;
 import vibe.textfilter.urlencode;
 import std.range : isOutputRange;
@@ -126,7 +127,7 @@ unittest
 		files = The $(D FilePart)s mapped to the corresponding key in which details on
 				transmitted files will be written to.
 		content_type = The value of the Content-Type HTTP header.
-		body_reader = A valid $(D InputSteram) data stream consumed by the parser.
+		body_reader = A valid $(D InputStream) data stream consumed by the parser.
 		max_line_length = The byte-sized maximum length of lines used as boundary delimitors in Multi-Part forms.
 */
 void parseMultiPartForm(InputStream)(ref FormFields fields, ref FilePartFormFields files,
@@ -639,4 +640,182 @@ unittest
 		assert(formEncode(bsonMap) == formEncode(bsonFields));
 	}
 
+}
+
+/**
+ * A MIME entity, typically sent in an HTTP request or e-mail with a "Content-Type"
+ * header value in the form "multipart/*", e.g. "multipart/form-data". Following RFC 2046, this
+ * entity represents one or more different data parts combined into a single body.
+ *
+ * A boundary value preceeded by "--" is used to separate the multipart body parts, and the last
+ * part is indicated by the boundary value also followed by "--". An example HTTP POST request
+ * is shown below:
+ * ```
+ * POST /upload HTTP/1.1
+ * Content-Length: 428
+ * Content-Type: multipart/form-data; boundary=abcde12345
+ * --abcde12345
+ * Content-Disposition: form-data; name="id"
+ * Content-Type: text/plain
+ * 123e4567-e89b-12d3-a456-426655440000
+ * --abcde12345
+ * Content-Disposition: form-data; name="address"
+ * Content-Type: application/json
+ * {
+ *	 "street": "3, Garden St",
+ *	 "city": "Hillsbery, UT"
+ * }
+ * --abcde12345
+ * Content-Disposition: form-data; name="profileImage "; filename="image1.png"
+ * Content-Type: application/octet-stream
+ * {…file content…}
+ * --abcde12345--
+ * ```
+ *
+ * See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
+ * See_Also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
+ * See_Also: https://datatracker.ietf.org/doc/html/rfc2388
+ */
+final class MultipartEntity {
+	InetHeaderMap headers;
+	MultipartEntityPart[] parts;
+	string boundaryStr;
+
+	private this() { }
+
+	// Of the multipart subtypes, only "form-data" is used in HTTP.
+	static MultipartEntity ofFormData(MultipartEntityPart[] parts) {
+		import std.conv : to;
+		import std.ascii : letters, digits;
+		import std.range : chain;
+		import std.random : randomSample;
+
+		auto entity = new MultipartEntity();
+
+		// Boundary delimiters can be up to 70 characters.
+		// https://datatracker.ietf.org/doc/html/rfc2046#section-5.1.1
+		// > The only mandatory global parameter for the "multipart" media type is
+		// > the boundary parameter, which consists of 1 to 70 characters from a
+		// > set of characters known to be very robust through mail gateways
+		entity.boundaryStr = randomSample(chain(letters.to!(dchar[]), digits.to!(dchar[])), 50)
+				.to!string;
+		entity.headers["Content-Type"] = "multipart/form-data; boundary=" ~ entity.boundaryStr;
+		entity.parts = parts;
+		return entity;
+	}
+	///
+	unittest {
+		import vibe.stream.memory;
+
+		// TODO: Add proper testing.
+		auto entity = MultipartEntity.ofFormData([
+				MultipartEntityPart.ofFormInput("name", "Bob Jones"),
+				MultipartEntityPart.ofFormFile("resume", "Resume-Bob.pdf", "application/pdf"),
+				MultipartEntityPart.ofFormFile(
+						"cover", "howdy.txt", "text/plain", createMemoryStream("hi there.")),
+		]);
+	}
+
+}
+
+/**
+ * A single piece of a MultipartEntity, containing another MIME entity. For example, a single entity
+ * with the "multipart/form-data" might contain 3 parts, one with MIME type "application/json",
+ * another with "text/plain", and the last with "application/octet-stream".
+ *
+ * A part is like a normal MIME entity, composed of headers and a body, with the following rules:
+ * - There may be 0 headers, in such cases, the "Content-Type" defaults to "text/plain; charset=US-ASCII".
+ * - The boundary delimiter must NOT appear in the body.
+ *
+ * For 'multipart/form-data', additional rules apply from RFC2388:
+ * - Each MulipartEntityPart must contain a "Content-Disposition" header, e.g.
+ *	 ```
+ *	 Content-Disposition: form-data; name="user"
+ *	 ```
+ * - Each part's "Content-Disposition" header should have the type "form-data".
+ * - Each part's "Content-Disposition" header should have a parameter "name" matching the original
+ *	 HTML form input/select name.
+ *
+ * See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
+ * See_Also: https://datatracker.ietf.org/doc/html/rfc2388
+ */
+final class MultipartEntityPart {
+	import std.sumtype : SumType;
+	import vibe.core.file : FileStream;
+
+	/**
+	 * Each part of the MultipartEntity has headers, like the main HTTP Entity.
+	 */
+	InetHeaderMap headers;
+
+	/**
+	 * If the body is a string, it is directly written to the connection.
+	 * If the body is an InputStream, that stream will be read and closed when written
+	 * to the connection.
+	 */
+	SumType!(string, InterfaceProxy!InputStream) entityBody;
+
+	private this() { }
+
+	/** Returns the mime type part of the 'Content-Type' header.
+
+			This function gets the pure mime type (e.g. "text/plain")
+			without any supplimentary parameters such as "charset=...".
+			Use contentTypeParameters to get any parameter string or
+			headers["Content-Type"] to get the raw value.
+	*/
+	@property string contentType()
+	const {
+		auto pv = "Content-Type" in headers;
+		if( !pv ) return "text/plain";
+		auto idx = std.string.indexOf(*pv, ';');
+		return idx >= 0 ? (*pv)[0 .. idx] : *pv;
+	}
+	/// ditto
+	@property void contentType(string ct) { headers["Content-Type"] = ct; }
+
+	/** Returns any supplementary parameters of the 'Content-Type' header.
+
+			This is a semicolon separated ist of key/value pairs. Usually, if set,
+			this contains the character set used for text based content types.
+	*/
+	@property string contentTypeParameters()
+	const {
+		auto pv = "Content-Type" in headers;
+		if( !pv ) return "charset=US-ASCII";
+		auto idx = std.string.indexOf(*pv, ';');
+		return idx >= 0 ? (*pv)[idx+1 .. $] : null;
+	}
+
+	/// A builder method creating a part from a form item.
+	static MultipartEntityPart ofFormInput(T)(string name, T v)
+	if (__traits(compiles, to!string(T.init))) {
+		auto part = new MultipartEntityPart();
+		part.headers["Content-Disposition"] = "form-data; name=" ~ name;
+		part.entityBody = v.to!string;
+		return part;
+	}
+
+	/// A builder method creating a part by loading a file by its path.
+	static MultipartEntityPart ofFormFile(string name, string filePath, string contentType = "application/octet-stream") {
+		import std.path : baseName;
+		import vibe.core.file : openFile;
+		string fileName = baseName(filePath);
+		auto fileStream = interfaceProxy!InputStream(openFile(filePath));
+		return MultipartEntityPart.ofFormFile(name, fileName, contentType, fileStream);
+	}
+
+	/// A builder method creating a part by loading a file from a stream.
+	static MultipartEntityPart ofFormFile(
+			string name, string fileName, string contentType, InterfaceProxy!InputStream fileStream) {
+		auto part = new MultipartEntityPart();
+		part.contentType = contentType;
+		part.headers["Content-Disposition"] = "form-data; name=" ~ name ~ "; filename=" ~ fileName;
+		// For now, take the file as-is using the "binary" encoding:
+		// https://datatracker.ietf.org/doc/html/rfc2045#section-2.9
+		part.headers["Content-Transfer-Encoding"] = "binary";
+
+		part.entityBody = fileStream;
+		return part;
+	}
 }
