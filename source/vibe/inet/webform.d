@@ -643,54 +643,59 @@ unittest
 }
 
 /**
- * A MIME entity, typically sent in an HTTP request or e-mail with a "Content-Type"
- * header value in the form "multipart/*", e.g. "multipart/form-data". Following RFC 2046, this
- * entity represents one or more different data parts combined into a single body.
- *
- * A boundary value preceeded by "--" is used to separate the multipart body parts, and the last
- * part is indicated by the boundary value also followed by "--". An example HTTP POST request
- * is shown below:
- * ```
- * POST /upload HTTP/1.1
- * Content-Length: 428
- * Content-Type: multipart/form-data; boundary=abcde12345
- * --abcde12345
- * Content-Disposition: form-data; name="id"
- * Content-Type: text/plain
- * 123e4567-e89b-12d3-a456-426655440000
- * --abcde12345
- * Content-Disposition: form-data; name="address"
- * Content-Type: application/json
- * {
- *	 "street": "3, Garden St",
- *	 "city": "Hillsbery, UT"
- * }
- * --abcde12345
- * Content-Disposition: form-data; name="profileImage "; filename="image1.png"
- * Content-Type: application/octet-stream
- * {…file content…}
- * --abcde12345--
- * ```
- *
- * See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
- * See_Also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
- * See_Also: https://datatracker.ietf.org/doc/html/rfc2388
- */
-final class MultipartEntity {
+	An HTTP entity containing one or more HTTP entities of different types.
+
+	Closely related to the MIME entity specification, this entity has a "Content-Type" header value
+	in the form "multipart/*", e.g. "multipart/form-data". Following RFC 2046, this entity represents
+	one or more different data parts combined into a single body. RFC 2388 describes the details of
+	the "multipart/form-data" content-type, which uses the "Content-Disposition" header to indicate
+	which form field each part describes.
+
+	A boundary value preceeded by "--" is used to separate the multipart body parts, and the last
+	part is indicated by the boundary value also followed by "--". An example HTTP POST request
+	is shown below:
+	```
+	POST /upload HTTP/1.1
+	Content-Length: 428
+	Content-Type: multipart/form-data; boundary=abcde12345
+
+	--abcde12345
+	Content-Disposition: form-data; name="id"
+	Content-Type: text/plain
+	123e4567-e89b-12d3-a456-426655440000
+	--abcde12345
+	Content-Disposition: form-data; name="address"
+	Content-Type: application/json
+	{
+	"street": "3, Garden St",
+	"city": "Hillsbery, UT"
+	}
+	--abcde12345
+	Content-Disposition: form-data; name="profileImage "; filename="image1.png"
+	Content-Type: application/octet-stream
+	{…file content…}
+	--abcde12345--
+	```
+
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
+	See_Also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2388
+*/
+struct MultipartEntity {
 	InetHeaderMap headers;
 	MultipartEntityPart[] parts;
 	string boundaryStr;
 
 	private this() { }
 
-	// Of the multipart subtypes, only "form-data" is used in HTTP.
+	/// Creates a "multipart/form-data" HTTP Entity.
 	static MultipartEntity ofFormData(MultipartEntityPart[] parts) {
 		import std.conv : to;
 		import std.ascii : letters, digits;
 		import std.range : chain;
 		import std.random : randomSample;
 
-		auto entity = new MultipartEntity();
+		auto entity = MultipartEntity();
 
 		// Boundary delimiters can be up to 70 characters.
 		// https://datatracker.ietf.org/doc/html/rfc2046#section-5.1.1
@@ -719,27 +724,27 @@ final class MultipartEntity {
 }
 
 /**
- * A single piece of a MultipartEntity, containing another MIME entity. For example, a single entity
- * with the "multipart/form-data" might contain 3 parts, one with MIME type "application/json",
- * another with "text/plain", and the last with "application/octet-stream".
- *
- * A part is like a normal MIME entity, composed of headers and a body, with the following rules:
- * - There may be 0 headers, in such cases, the "Content-Type" defaults to "text/plain; charset=US-ASCII".
- * - The boundary delimiter must NOT appear in the body.
- *
- * For 'multipart/form-data', additional rules apply from RFC2388:
- * - Each MulipartEntityPart must contain a "Content-Disposition" header, e.g.
- *	 ```
- *	 Content-Disposition: form-data; name="user"
- *	 ```
- * - Each part's "Content-Disposition" header should have the type "form-data".
- * - Each part's "Content-Disposition" header should have a parameter "name" matching the original
- *	 HTML form input/select name.
- *
- * See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
- * See_Also: https://datatracker.ietf.org/doc/html/rfc2388
+	A single piece of a MultipartEntity, containing another MIME entity. For example, a single entity
+	with the "multipart/form-data" might contain 3 parts, one with MIME type "application/json",
+	another with "text/plain", and the last with "application/octet-stream".
+
+	A part is like a normal MIME entity, composed of headers and a body, with the following rules:
+	- There may be 0 headers, in such cases, the "Content-Type" defaults to "text/plain; charset=US-ASCII".
+	- The boundary delimiter must NOT appear in the body.
+
+	For 'multipart/form-data', additional rules apply from RFC2388:
+	- Each MulipartEntityPart must contain a "Content-Disposition" header, e.g.
+		 ```
+		 Content-Disposition: form-data; name="user"
+		 ```
+	- Each part's "Content-Disposition" header should have the type "form-data".
+	- Each part's "Content-Disposition" header should have a parameter "name" matching the original
+		 HTML form input/select name.
+
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2388
  */
-final class MultipartEntityPart {
+struct MultipartEntityPart {
 	import std.sumtype : SumType;
 	import vibe.core.file : FileStream;
 
@@ -759,10 +764,10 @@ final class MultipartEntityPart {
 
 	/** Returns the mime type part of the 'Content-Type' header.
 
-			This function gets the pure mime type (e.g. "text/plain")
-			without any supplimentary parameters such as "charset=...".
-			Use contentTypeParameters to get any parameter string or
-			headers["Content-Type"] to get the raw value.
+		This function gets the pure mime type (e.g. "text/plain")
+		without any supplimentary parameters such as "charset=...".
+		Use contentTypeParameters to get any parameter string or
+		headers["Content-Type"] to get the raw value.
 	*/
 	@property string contentType()
 	const {
@@ -771,13 +776,14 @@ final class MultipartEntityPart {
 		auto idx = std.string.indexOf(*pv, ';');
 		return idx >= 0 ? (*pv)[0 .. idx] : *pv;
 	}
+
 	/// ditto
 	@property void contentType(string ct) { headers["Content-Type"] = ct; }
 
 	/** Returns any supplementary parameters of the 'Content-Type' header.
 
-			This is a semicolon separated ist of key/value pairs. Usually, if set,
-			this contains the character set used for text based content types.
+		This is a semicolon separated ist of key/value pairs. Usually, if set,
+		this contains the character set used for text based content types.
 	*/
 	@property string contentTypeParameters()
 	const {
@@ -787,7 +793,7 @@ final class MultipartEntityPart {
 		return idx >= 0 ? (*pv)[idx+1 .. $] : null;
 	}
 
-	/// A builder method creating a part from a form item.
+	/// Creates a multipart entity part as a named form item.
 	static MultipartEntityPart ofFormInput(T)(string name, T v)
 	if (__traits(compiles, to!string(T.init))) {
 		auto part = new MultipartEntityPart();
@@ -797,12 +803,12 @@ final class MultipartEntityPart {
 	}
 
 	/// A builder method creating a part by loading a file by its path.
-	static MultipartEntityPart ofFormFile(string name, string filePath, string contentType = "application/octet-stream") {
+	static MultipartEntityPart ofFormFile(string name, string filePath) {
 		import std.path : baseName;
 		import vibe.core.file : openFile;
 		string fileName = baseName(filePath);
 		auto fileStream = interfaceProxy!InputStream(openFile(filePath));
-		return MultipartEntityPart.ofFormFile(name, fileName, contentType, fileStream);
+		return MultipartEntityPart.ofFormFile(name, fileName, getMimeTypeForFile(filePath), fileStream);
 	}
 
 	/// A builder method creating a part by loading a file from a stream.
