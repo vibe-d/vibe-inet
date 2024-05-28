@@ -24,6 +24,7 @@ import std.range : isInputRange, isOutputRange, only, ElementType;
 import std.string;
 import std.sumtype : SumType;
 import std.traits : ValueType, KeyType;
+import std.variant : Variant, variantArray;
 
 
 /**
@@ -651,9 +652,11 @@ unittest
 	Leaf-nodes in the Multipart tree: simple-text and files.
 */
 bool isMultipartBodyType(T)() {
-	static if (isInputRange!(T)
-			&& is(ElementType!(T) == MultipartEntity!(HeaderT, BodyT), HeaderT, BodyT)) {
+	static if (isInputRange!(T) && is(ElementType!(T) == MultipartEntity!(HeaderT, BodyT), HeaderT, BodyT)) {
 		return isStringMap!(HeaderT) && isMultipartBodyType!(BodyT);
+    } else static if (is(ElementType!(T) == Variant)) {
+		// TODO: Figure out a better alternative than a blanket allowance for Variant
+		return true;
 	} else {
 		return is(T : string)
 				|| isInputStream!T;
@@ -732,7 +735,8 @@ struct MultipartEntity(HeaderT = InetHeaderMap, BodyT)
 if (isStringMap!HeaderT && isMultipartBodyType!BodyT)
 {
 	HeaderT headers;
-	BodyT bodyValue;
+	//BodyT bodyValue;
+	Variant bodyValue;
 
 	/// If the entity is a multipart entity, the boundary string to use. It is kept here so that
 	/// it does not have to be read from the headers each time it is needed.
@@ -807,7 +811,7 @@ auto multipartFormData(MultipartR)(MultipartR parts)
 if (isInputRange!MultipartR && isMultipartBodyType!(MultipartR)) {
 	string boundaryStr = createBoundaryString();
 	auto headers = only(
-			tuple("Content-Type", "multipart/form-data; boundary=" ~ boundary));
+			tuple("Content-Type", "multipart/form-data; boundary=" ~ boundaryStr));
 	return MultipartEntity!(typeof(headers), typeof(parts))(headers: headers, bodyValue: parts, boundary: boundaryStr);
 }
 
@@ -816,9 +820,9 @@ unittest {
 	import vibe.stream.memory;
 
 	// Build an entity using the var-args form.
-	auto entity = multipartFormData(only(
+	auto entity = multipartFormData(variantArray(
 			multipartFormInput("name", "Bob Jones"),
-			multipartFormFile("resume", formFile("Resume-Bob.pdf", "application/pdf")),
+			multipartFormFile("resume", formFile("Resume-Bob.pdf", createMemoryStream(cast(ubyte[]) "dummy data"), "application/pdf")),
 			multipartFormFiles("photos", [
 					formFile("portrait1.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
 					formFile("portrait2.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
@@ -836,12 +840,14 @@ static auto multipartFormInput(T)(string name, T v) {
 }
 
 /// A convenience type to make it easier to group data about a file in a form.
-struct FormFile(FileStreamT) {
+struct FormFile(InputStreamT)
+if (isInputStream!InputStreamT) {
 	string fileName;
-	FileStreamT fileStream;
+	InputStreamT fileStream;
 	string contentType;
 }
 
+/// Creates a FormFile by opening a file specified by `filePath`.
 auto formFile(string filePath, string contentType = "") {
 	import std.path : baseName;
 	import vibe.core.file : openFile;
@@ -857,7 +863,7 @@ if (isInputStream!StreamT) {
 	if (contentType == "") {
 		contentType = getMimeTypeForFile(fileName);
 	}
-	return FormFile!StreamT(fileName, fileStream, contentType);
+	return FormFile!(StreamT)(fileName, fileStream, contentType);
 }
 
 /// A builder method creating a part by loading a file from a stream.
