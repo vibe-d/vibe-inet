@@ -731,11 +731,10 @@ bool isMultipartBodyType(T)() {
 	See_Also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
 	See_Also: https://datatracker.ietf.org/doc/html/rfc2388
 */
-struct MultipartEntity(HeaderT = InetHeaderMap, BodyT)
-if (isStringMap!HeaderT && isMultipartBodyType!BodyT)
+struct MultipartEntity(HeaderT = InetHeaderMap)
+if (isStringMap!HeaderT)
 {
 	HeaderT headers;
-	//BodyT bodyValue;
 	Variant bodyValue;
 
 	/// If the entity is a multipart entity, the boundary string to use. It is kept here so that
@@ -743,7 +742,7 @@ if (isStringMap!HeaderT && isMultipartBodyType!BodyT)
 	string boundary;
 
 	/// MultipartEntities should be constructed using factory methods.
-	private this(HeaderT headers, BodyT bodyValue, string boundary = "") {
+	private this(BodyT)(HeaderT headers, BodyT bodyValue, string boundary = "") {
 		this.headers = headers;
 		this.bodyValue = bodyValue;
 		this.boundary = boundary;
@@ -783,7 +782,7 @@ if (isStringMap!HeaderT && isMultipartBodyType!BodyT)
 
 
 ////
-// Factory Methods
+// Multipart Factory Methods
 ////
 
 // /// Returns a MultipartEntity with Content-Type "multipart/form-data" from parts as a compile-time sequence.
@@ -794,7 +793,6 @@ if (isStringMap!HeaderT && isMultipartBodyType!BodyT)
 // ///
 // unittest {
 // 	import vibe.stream.memory;
-
 // 	// Build an entity using the var-args form.
 // 	auto entity = multipartFormData(
 // 			multipartFormInput("name", "Bob Jones"),
@@ -812,7 +810,7 @@ if (isInputRange!MultipartR && isMultipartBodyType!(MultipartR)) {
 	string boundaryStr = createBoundaryString();
 	auto headers = only(
 			tuple("Content-Type", "multipart/form-data; boundary=" ~ boundaryStr));
-	return MultipartEntity!(typeof(headers), typeof(parts))(headers: headers, bodyValue: parts, boundary: boundaryStr);
+	return MultipartEntity!(typeof(headers))(headers: headers, bodyValue: parts, boundary: boundaryStr);
 }
 
 ///
@@ -836,7 +834,7 @@ static auto multipartFormInput(T)(string name, T v) {
 	static assert(__traits(compiles, to!string(T.init)), "Type '" ~ T.stringof ~ "' must be convertible to a string!");
 	auto headers = only(
 			tuple("Content-Disposition", "form-data; name=" ~ name));
-	return MultipartEntity!(typeof(headers), string)(headers: headers, bodyValue: v.to!string);
+	return MultipartEntity!(typeof(headers))(headers: headers, bodyValue: v.to!string);
 }
 
 /// A convenience type to make it easier to group data about a file in a form.
@@ -875,8 +873,16 @@ if (isInputStream!StreamT) {
 			// For now, take the file as-is using the "binary" encoding:
 			// https://datatracker.ietf.org/doc/html/rfc2045#section-2.9
 			tuple("Content-Transfer-Encoding", "binary"));
-	return MultipartEntity!(typeof(headers), typeof(formFile.fileStream))(
+	return MultipartEntity!(typeof(headers))(
 			headers: headers, bodyValue: formFile.fileStream);
+}
+
+// TODO: Using this causes an error.
+// ```
+// Error: forward reference to inferred return type of function call `multipartFormFiles(name, __param_1, __param_2)`
+// ```
+auto multipartFormFiles(FormFileR...)(string name, FormFileR formFiles) {
+	return multipartFormFiles(name, formFiles);
 }
 
 /// Creates a MultipartEntity consisting of several files for the same form input.
@@ -892,11 +898,11 @@ auto multipartFormFiles(FormFileR)(string name, FormFileR formFiles) {
 			tuple("Content-Type", "multipart/mixed; boundary=" ~ boundaryStr),
 			tuple("Content-Disposition", "form-data; name=" ~ name));
 	auto multipartFormFileRange = formFiles.map!(formFile => multipartFormFile(name, formFile));
-	return MultipartEntity!(typeof(headers), typeof(multipartFormFileRange))(
+	return MultipartEntity!(typeof(headers))(
 			headers: headers,
 			bodyValue: multipartFormFileRange,
 			boundary: boundaryStr);
- }
+}
 
 /**
    Boundary delimiters can be up to 70 characters.
