@@ -749,7 +749,7 @@ struct MultipartEntity //(HeaderT = InetHeaderMap)
 	//  	this.headers = headers;
 	//  	this.bodyValue = bodyValue;
 	//  	this.boundary = boundary;
-	}
+	// }
 
 	/** Returns the mime type part of the 'Content-Type' header.
 
