@@ -351,6 +351,8 @@ struct URL {
 
 	/// The anchor part of the URL (optional)
 	@property string anchor() const nothrow { return m_anchor; }
+	/// ditto
+	@property void anchor(string v) nothrow { m_anchor = v; }
 
 	/// The path part plus query string and anchor
 	@property string localURI()
