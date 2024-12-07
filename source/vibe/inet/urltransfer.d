@@ -62,7 +62,9 @@ void download(HTTPClient_ = void*)(URL url, scope void delegate(scope InputStrea
 						throw new HTTPStatusException(res.statusCode, "Server responded with "~httpStatusText(res.statusCode)~" for "~url.toString());
 					case HTTPStatus.ok:
 						done = true;
-						callback(res.bodyReader.asInterface!InputStream);
+						auto istr = res.bodyReader.asInterface!InputStream;
+						scope (exit) destroy(istr);
+						callback(istr);
 						break;
 					case HTTPStatus.movedPermanently:
 					case HTTPStatus.found:
