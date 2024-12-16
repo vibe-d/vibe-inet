@@ -13,14 +13,18 @@ import vibe.core.log;
 import vibe.core.path;
 import vibe.inet.message;
 import vibe.internal.string;
+import vibe.internal.interfaceproxy : InterfaceProxy, interfaceProxy;
 import vibe.stream.operations;
 import vibe.textfilter.urlencode;
-import std.range : isOutputRange;
-import std.traits : ValueType, KeyType;
 
 import std.array;
+import std.typecons : tuple;
 import std.exception;
+import std.range : isInputRange, isOutputRange, only, ElementType, InputRangeObject;
 import std.string;
+import std.sumtype : SumType;
+import std.traits : ValueType, KeyType;
+import std.variant : Variant, variantArray;
 
 
 /**
@@ -126,7 +130,7 @@ unittest
 		files = The $(D FilePart)s mapped to the corresponding key in which details on
 				transmitted files will be written to.
 		content_type = The value of the Content-Type HTTP header.
-		body_reader = A valid $(D InputSteram) data stream consumed by the parser.
+		body_reader = A valid $(D InputStream) data stream consumed by the parser.
 		max_line_length = The byte-sized maximum length of lines used as boundary delimitors in Multi-Part forms.
 */
 void parseMultiPartForm(InputStream)(ref FormFields fields, ref FilePartFormFields files,
@@ -639,4 +643,299 @@ unittest
 		assert(formEncode(bsonMap) == formEncode(bsonFields));
 	}
 
+}
+
+/**
+	An HTTP multipart/form-data is like tree with up to 3 levels.
+	Tree-Nodes include: multipart/form-data for the form itself and multipart/mixed when multiple
+	files are attached to the same form input.
+	Leaf-nodes in the Multipart tree: simple-text and files.
+*/
+bool isMultipartBodyType(T)() {
+	static if (isInputRange!(T) && is(ElementType!(T) == MultipartEntity!(HeaderT, BodyT), HeaderT, BodyT)) {
+		return isStringMap!(HeaderT) && isMultipartBodyType!(BodyT);
+    } else static if (is(ElementType!(T) == Variant)) {
+		// TODO: Figure out a better alternative than a blanket allowance for Variant
+		return true;
+	} else {
+		return is(T : string)
+				|| isInputStream!T;
+	}
+}
+
+/**
+	A top-level multipart entity containing one or more HTTP entities of different types.
+
+	In the context of HTTP, only the type "multipart/form-data" is used, which is composed of simple
+	values such as form text input or form checkbox input with default Content-Type of "text/plain",
+	single files with types like "application/pdf", or a set of files under a multipart entity of
+	type "multipart/mixed". In the context of email, it is common for "multipart/mixed" and
+	"multipart/alternative" to be used to form a tree of data, with each leaf node having a concrete
+	content-type such as "text/plain" or "application/pdf".
+
+	Closely related to the MIME entity specification, this entity has a "Content-Type" header value
+	in the form "multipart/*", e.g. "multipart/form-data". Following RFC 2046, this entity represents
+	one or more different data parts combined into a single body. RFC 2388 describes the details of
+	the "multipart/form-data" content-type, which uses the "Content-Disposition" header to indicate
+	which form field each part describes.
+
+	A boundary value preceeded by "--" is used to separate the multipart body parts, and the last
+	part is indicated by the boundary value also followed by "--". An example HTTP POST request
+	is shown below:
+	```
+	POST /upload HTTP/1.1
+	Content-Length: 428
+	Content-Type: multipart/form-data; boundary=abcde12345
+
+	--abcde12345
+	Content-Disposition: form-data; name="id"
+	Content-Type: text/plain
+	123e4567-e89b-12d3-a456-426655440000
+	--abcde12345
+	Content-Disposition: form-data; name="address"
+	Content-Type: application/json
+	{
+	"street": "3, Garden St",
+	"city": "Hillsbery, UT"
+	}
+	--abcde12345
+	Content-Disposition: form-data; name="profileImage "; filename="image1.png"
+	Content-Type: application/octet-stream
+	{…file content…}
+	--abcde12345--
+	```
+
+	A single piece of a MultipartEntity, containing another MIME entity. For example, a single entity
+	with the "multipart/form-data" might contain 3 parts, one with MIME type "application/json",
+	another with "text/plain", and the last with "application/octet-stream".
+
+	A part is like a normal MIME entity, composed of headers and a body, with the following rules:
+	- There may be 0 headers, in such cases, the "Content-Type" defaults to "text/plain; charset=US-ASCII".
+	- The boundary delimiter must NOT appear in the body.
+
+	For 'multipart/form-data', additional rules apply from RFC2388:
+	- Each MulipartEntityPart must contain a "Content-Disposition" header, e.g.
+		 ```
+		 Content-Disposition: form-data; name="user"
+		 ```
+	- Each part's "Content-Disposition" header should have the type "form-data".
+	- Each part's "Content-Disposition" header should have a parameter "name" matching the original
+		 HTML form input/select name.
+
+	Params:
+	HeaderT = The type to use to represent headers. The default value is `InetHeaderMap`, which is
+	    a struct using a static-array, and avoids dynamic memory allocations when there are fewer
+		than 32 headers.
+
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2046#section-5.1
+	See_Also: https://www.w3.org/Protocols/rfc1341/7_2_Multipart.html
+	See_Also: https://datatracker.ietf.org/doc/html/rfc2388
+*/
+struct MultipartEntity //(HeaderT = InetHeaderMap)
+//if (isStringMap!HeaderT)
+{
+	//HeaderT headers;
+	InetHeaderMap headers;
+	//Variant bodyValue;
+	//SumType!(string, InterfaceProxy!InputStream, InputRangeObject!ubyte, MultipartEntity[]) bodyValue;
+	SumType!(string, InterfaceProxy!InputStream, MultipartEntity[]) bodyValue;
+
+	/// If the entity is a multipart entity, the boundary string to use. It is kept here so that
+	/// it does not have to be read from the headers each time it is needed.
+	string boundary;
+
+	// /// MultipartEntities should be constructed using factory methods.
+	// private this(BodyT)(InetHeaderMap headers, BodyT bodyValue, string boundary = "") {
+	//  	this.headers = headers;
+	//  	this.bodyValue = bodyValue;
+	//  	this.boundary = boundary;
+	// }
+
+	/** Returns the mime type part of the 'Content-Type' header.
+
+		This function gets the pure mime type (e.g. "text/plain")
+		without any supplimentary parameters such as "charset=...".
+		Use contentTypeParameters to get any parameter string or
+		headers["Content-Type"] to get the raw value.
+	*/
+	@property string contentType()
+	const {
+		auto pv = "Content-Type" in headers;
+		if( !pv ) return "text/plain";
+		auto idx = std.string.indexOf(*pv, ';');
+		return idx >= 0 ? (*pv)[0 .. idx] : *pv;
+	}
+
+	/// ditto
+	// @property void contentType(string ct) { headers["Content-Type"] = ct; }
+
+	/** Returns any supplementary parameters of the 'Content-Type' header.
+
+		This is a semicolon separated ist of key/value pairs. Usually, if set,
+		this contains the character set used for text based content types.
+	*/
+	@property string contentTypeParameters()
+	const {
+		auto pv = "Content-Type" in headers;
+		if( !pv ) return "charset=US-ASCII";
+		auto idx = std.string.indexOf(*pv, ';');
+		return idx >= 0 ? (*pv)[idx+1 .. $] : null;
+	}
+}
+
+
+////
+// Multipart Factory Methods
+////
+
+// /// Returns a MultipartEntity with Content-Type "multipart/form-data" from parts as a compile-time sequence.
+// auto multipartFormData(MultipartR...)(MultipartR parts) {
+// 	return multipartFormData(parts);
+// }
+
+// ///
+// unittest {
+// 	import vibe.stream.memory;
+// 	// Build an entity using the var-args form.
+// 	auto entity = multipartFormData(
+// 			multipartFormInput("name", "Bob Jones"),
+// 			multipartFormFile("resume", formFile("Resume-Bob.pdf", "application/pdf")),
+// 			multipartFormFiles("photos", [
+// 					formFile("portrait1.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
+// 					formFile("portrait2.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
+// 					]),
+// 			);
+// }
+
+/// Returns a MultipartEntity with Content-Type "multipart/form-data" from parts as a range.
+// auto multipartFormData(MultipartR)(MultipartR parts)
+// if (isInputRange!MultipartR && is(ElementType!MultipartR : MultipartEntity)) {
+auto multipartFormData(MultipartEntity[] parts) {
+	string boundaryStr = createBoundaryString();
+	auto headers = InetHeaderMap();
+	headers["Content-Type"] = "multipart/form-data; boundary=" ~ boundaryStr;
+	auto entity = MultipartEntity(headers: headers, boundary: boundaryStr);
+	// Set the body separately to avoid compiler error:
+	// `Error: cannot implicitly convert expression `parts` of type `MultipartEntity[]` to `SumType!(...`
+	entity.bodyValue = parts;
+	return entity;
+}
+
+///
+unittest {
+	import vibe.stream.memory;
+
+	// Build an entity using the var-args form.
+	auto entity = multipartFormData([
+			multipartFormInput("name", "Bob Jones"),
+			multipartFormFile("resume", formFile("Resume-Bob.pdf", createMemoryStream(cast(ubyte[]) "dummy data"), "application/pdf")),
+			multipartFormFiles("photos", [
+					formFile("portrait1.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
+					formFile("portrait2.jpg", createMemoryStream(cast(ubyte[]) "dummy data"), "image/png"),
+					]),
+			]);
+}
+
+/// Creates a multipart entity part as a named form item.
+static auto multipartFormInput(T)(string name, T v) {
+	import std.conv : to;
+	static assert(__traits(compiles, to!string(T.init)), "Type '" ~ T.stringof ~ "' must be convertible to a string!");
+	auto headers = InetHeaderMap();
+	headers["Content-Disposition"] = "form-data; name=" ~ name;
+	auto entity = MultipartEntity(headers: headers);
+	entity.bodyValue = v.to!string;
+	return entity;
+}
+
+/// A convenience type to make it easier to group data about a file in a form.
+struct FormFile {
+	string fileName;
+	InterfaceProxy!InputStream fileStream;
+	string contentType;
+}
+
+/// Creates a FormFile by opening a file specified by `filePath`.
+auto formFile(string filePath, string contentType = "") {
+	import std.path : baseName;
+	import vibe.core.file : openFile;
+	string fileName = baseName(filePath);
+	auto fileStream = interfaceProxy!InputStream(openFile(filePath));
+	return formFile(fileName, fileStream, contentType);
+}
+
+/// Creates a FormFile object which is used when attaching multiple files to a multipart form input field.
+auto formFile(StreamT)(string fileName, StreamT inputStream, string contentType = "")
+if (isInputStream!StreamT) {
+	import vibe.inet.mimetypes : getMimeTypeForFile;
+	if (contentType == "") {
+		contentType = getMimeTypeForFile(fileName);
+	}
+	auto fileStream = interfaceProxy!InputStream(inputStream);
+	return FormFile(fileName, fileStream, contentType);
+}
+
+/// A builder method creating a part by loading a file from a stream.
+auto multipartFormFile(string name, FormFile formFile) {
+	auto headers = InetHeaderMap();
+	headers["Content-Type"] = formFile.contentType;
+	headers["Content-Disposition"] = "form-data; name=" ~ name ~ "; filename=" ~ formFile.fileName;
+	// For now, take the file as-is using the "binary" encoding:
+	// https://datatracker.ietf.org/doc/html/rfc2045#section-2.9
+	headers["Content-Transfer-Encoding"] = "binary";
+	auto entity = MultipartEntity(headers: headers);
+	entity.bodyValue = formFile.fileStream;
+	return entity;
+}
+
+// TODO: Using this causes an error.
+// ```
+// Error: forward reference to inferred return type of function call `multipartFormFiles(name, __param_1, __param_2)`
+// ```
+//auto multipartFormFiles(FormFileR...)(string name, FormFileR formFiles) {
+//	return multipartFormFiles(name, formFiles);
+//}
+
+/// Creates a MultipartEntity consisting of several files for the same form input.
+auto multipartFormFiles(string name, FormFile[] formFiles) {
+	// static assert(isInputRange!FormFileR, "Type '" ~ FormFileR.stringof ~ "' is not an input range!");
+	// enum isFormFileElem = is(ElementType!FormFileR == FormFile);
+	// static assert(isFormFileElem, "Type '" ~ (ElementType!FormFileR).stringof ~ "' must have elements of type FormFile.");
+	import std.algorithm : map;
+
+	string boundaryStr = createBoundaryString();
+	auto headers = InetHeaderMap();
+	headers["Content-Type"] = "multipart/mixed; boundary=" ~ boundaryStr;
+	headers["Content-Disposition"] = "form-data; name=" ~ name;
+	//auto multipartFormFileRange = formFiles.map!(formFile => multipartFormFile(name, formFile));
+	//auto multipartFormFiles = formFiles.map!(formFile => multipartFormFile(name, formFile)).array;
+	// This loop is required because SumType disables certain copy constructors, an using a map above will result in:
+	// std/array.d(113,23): Error: generating an `inout` copy constructor for `struct vibe.inet.webform.MultipartEntity` failed, therefore instances of it are uncopyable
+	// core/internal/lifetime.d(69,9): Error: static assert:  "Cannot emplace a MultipartEntity because MultipartEntity.this(this) is annotated with @disable."
+
+	MultipartEntity[] parts = new MultipartEntity[](formFiles.length);
+	foreach (i, formFile; formFiles) {
+		parts[i] = multipartFormFile(name, formFile);
+	}
+	auto entity = MultipartEntity(
+			headers: headers,
+			boundary: boundaryStr);
+	entity.bodyValue = parts;
+	return entity;
+}
+
+/**
+   Boundary delimiters can be up to 70 characters.
+   https://datatracker.ietf.org/doc/html/rfc2046#section-5.1.1
+   > The only mandatory global parameter for the "multipart" media type is
+   > the boundary parameter, which consists of 1 to 70 characters from a
+   > set of characters known to be very robust through mail gateways
+*/
+private string createBoundaryString() {
+	import std.conv : to;
+	import std.ascii : letters, digits;
+	import std.range : chain;
+	import std.random : randomSample;
+
+	return randomSample(chain(letters.to!(dchar[]), digits.to!(dchar[])), 50)
+			.to!string;
 }
