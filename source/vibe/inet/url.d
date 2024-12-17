@@ -281,7 +281,6 @@ struct URL {
 	/// Set the path part of the URL. It should be properly encoded.
 	@property void pathString(string s)
 	{
-		enforce(isURLEncoded(s), "Wrong URL encoding of the path string '"~s~"'");
 		m_path = InetPath(s);
 	}
 
