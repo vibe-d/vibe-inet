@@ -449,19 +449,11 @@ struct URL {
 
 		version (Windows) {
 			if (this.host.length) {
-				static if (is(NativePath.Segment2)) {
-					auto p = NativePath(this.path
-							.bySegment2
-							.dropOne
-							.map!(s => cast(WindowsPath.Segment2)s)
-						);
-				} else {
-					auto p = NativePath(this.path
-							.bySegment
-							.dropOne
-							.map!(s => cast(WindowsPath.Segment)s)
-						);
-				}
+				auto p = NativePath(this.path
+						.bySegment2
+						.dropOne
+						.map!(s => cast(WindowsPath.Segment)s)
+					);
 				return NativePath.fromTrustedString(`\\`~this.host) ~ p;
 			}
 		}
