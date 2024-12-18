@@ -281,7 +281,6 @@ struct URL {
 	/// Set the path part of the URL. It should be properly encoded.
 	@property void pathString(string s)
 	{
-		enforce(isURLEncoded(s), "Wrong URL encoding of the path string '"~s~"'");
 		m_path = InetPath(s);
 	}
 
@@ -450,19 +449,11 @@ struct URL {
 
 		version (Windows) {
 			if (this.host.length) {
-				static if (is(NativePath.Segment2)) {
-					auto p = NativePath(this.path
-							.bySegment2
-							.dropOne
-							.map!(s => cast(WindowsPath.Segment2)s)
-						);
-				} else {
-					auto p = NativePath(this.path
-							.bySegment
-							.dropOne
-							.map!(s => cast(WindowsPath.Segment)s)
-						);
-				}
+				auto p = NativePath(this.path
+						.bySegment2
+						.dropOne
+						.map!(s => cast(WindowsPath.Segment)s)
+					);
 				return NativePath.fromTrustedString(`\\`~this.host) ~ p;
 			}
 		}
