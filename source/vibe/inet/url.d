@@ -554,10 +554,18 @@ struct URL {
 		return this.path.bySegment.startsWith(rhs.path.bySegment);
 	}
 
-	URL opBinary(string OP, Path)(Path rhs) const if (OP == "~" && isAnyPath!Path) { return URL(m_schema, m_host, m_port, this.path ~ rhs); }
-	URL opBinary(string OP, Path)(Path.Segment rhs) const if (OP == "~" && isAnyPath!Path) { return URL(m_schema, m_host, m_port, this.path ~ rhs); }
-	void opOpAssign(string OP, Path)(Path rhs) if (OP == "~" && isAnyPath!Path) { this.path = this.path ~ rhs; }
-	void opOpAssign(string OP, Path)(Path.Segment rhs) if (OP == "~" && isAnyPath!Path) { this.path = this.path ~ rhs; }
+	URL opBinary(string OP, Path)(Path rhs) const if (OP == "~" && isAnyPath!Path) {
+		return URL(m_schema, m_host, m_port, (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs);
+	}
+	URL opBinary(string OP, Path)(Path.Segment rhs) const if (OP == "~" && isAnyPath!Path) {
+		return URL(m_schema, m_host, m_port, (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs);
+	}
+	void opOpAssign(string OP, Path)(Path rhs) if (OP == "~" && isAnyPath!Path) {
+		this.path = (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs;
+	}
+	void opOpAssign(string OP, Path)(Path.Segment rhs) if (OP == "~" && isAnyPath!Path) {
+		this.path = (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs;
+	}
 
 	/// Tests two URLs for equality using '=='.
 	bool opEquals(ref const URL rhs)
@@ -1132,6 +1140,11 @@ unittest {
 		== "http://example.com/foo/bar");
 	assert((URL.parse("http://example.com/foo") ~ InetPath.Segment("bar")).toString()
 		== "http://example.com/foo/bar");
+
+	assert((URL.parse("http://example.com") ~ InetPath("foo")).toString()
+		== "http://example.com/foo");
+	assert((URL.parse("http://example.com") ~ InetPath.Segment("foo")).toString()
+		== "http://example.com/foo");
 
 	URL url = URL.parse("http://example.com/");
 	url ~= InetPath("foo");
