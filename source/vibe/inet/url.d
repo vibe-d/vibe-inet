@@ -555,16 +555,20 @@ struct URL {
 	}
 
 	URL opBinary(string OP, Path)(Path rhs) const if (OP == "~" && isAnyPath!Path) {
-		return URL(m_schema, m_host, m_port, (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs);
+		URL ret = this;
+		ret ~= rhs;
+		return ret;
 	}
 	URL opBinary(string OP, Path)(Path.Segment rhs) const if (OP == "~" && isAnyPath!Path) {
-		return URL(m_schema, m_host, m_port, (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs);
+		URL ret = this;
+		ret ~= rhs;
+		return ret;
 	}
 	void opOpAssign(string OP, Path)(Path rhs) if (OP == "~" && isAnyPath!Path) {
-		this.path = (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs;
+		this.path = (!this.path.empty ? this.path : InetPath.fromTrustedString(`/`)) ~ rhs;
 	}
 	void opOpAssign(string OP, Path)(Path.Segment rhs) if (OP == "~" && isAnyPath!Path) {
-		this.path = (!this.path.empty ? this.path : InetPath(`/`)) ~ rhs;
+		this.path = (!this.path.empty ? this.path : InetPath.fromTrustedString(`/`)) ~ rhs;
 	}
 
 	/// Tests two URLs for equality using '=='.
@@ -1156,4 +1160,22 @@ unittest {
 	assert(URL.parse("foo:/foo/bar").toString() == "foo:/foo/bar");
 	assert(URL.parse("foo:/foo/bar").path.toString() == "/foo/bar");
 	assert(URL.parse("foo:foo/bar").toString() == "foo:foo/bar");
+}
+
+@safe nothrow unittest {
+	URL url;
+	try url = URL("http://user@example.org:8080");
+	catch (Exception e) assert(false, e.msg);
+	assert((url ~ InetPath.fromTrustedString("foo")).toString()
+		== "http://user@example.org:8080/foo");
+	assert((url ~ InetPath.Segment.fromTrustedString("foo")).toString()
+		== "http://user@example.org:8080/foo");
+
+	auto url2 = url;
+	url2 ~= InetPath.fromTrustedString("foo");
+	assert(url2.toString() == "http://user@example.org:8080/foo");
+
+	auto url3 = url;
+	url3 ~= InetPath.Segment.fromTrustedString("foo");
+	assert(url3.toString() == "http://user@example.org:8080/foo");
 }
