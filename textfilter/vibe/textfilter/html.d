@@ -159,7 +159,7 @@ void filterHTMLEscape(R)(ref R dst, dchar ch, HTMLEscapeFlags flags = HTMLEscape
 		case '0': .. case '9': goto case;
 		case ' ', '\t', '-', '_', '.', ':', ',', ';',
 			 '#', '+', '*', '?', '=', '(', ')', '/', '!',
-			 '%' , '{', '}', '[', ']', '`', '´', '$', '^', '~':
+			 '%' , '{', '}', '[', ']', '`', '$', '^', '~':
 			put(dst, cast(char)ch);
 			break;
 		case '<': put(dst, "&lt;"); break;
