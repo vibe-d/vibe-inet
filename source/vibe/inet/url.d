@@ -539,10 +539,10 @@ struct URL {
 
 		See `normalize` for a full description.
 	*/
-	URL normalized()
+	URL normalized(bool isDirectory = false)
 	const {
 		URL ret = this;
-		ret.normalize();
+		ret.normalize(isDirectory);
 		return ret;
 	}
 
