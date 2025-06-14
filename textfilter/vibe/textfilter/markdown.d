@@ -1143,9 +1143,55 @@ pure @safe {
 	auto cidx = () @trusted { return pstr.indexOf(ctag); }();
 	if (cidx < 1) return false;
 
+	while (pstr[cidx + ctag.length .. $].startsWith("`")) {
+		cidx += ctag.length;
+		if (cidx >= pstr.length) return false;
+		while (cidx < pstr.length && pstr[cidx] == '`')
+			cidx++;
+		auto idx = pstr[cidx .. $].indexOf(ctag);
+		if (idx < 0) return false;
+		cidx += idx;
+	}
+
 	code = pstr[0 .. cidx];
 	str = pstr[cidx+ctag.length .. $];
+
+	// strip single surrounding space characters
+	if (code.length >= 2 && code[0] == ' ' && code[1] != ' ') code = code[1 .. $];
+	if (code.length >= 2 && code[$-1] == ' ' && code[$-2] != ' ') code = code[0 .. $-1];
+
 	return true;
+}
+
+unittest {
+	void test(string str, string code) {
+		string result;
+		assert(parseInlineCode(str, result), str);
+		assert(result == code, "'"~result~"'");
+	}
+
+	void testFail(string str)
+	{
+		string result;
+		assert(!parseInlineCode(str, result), "'"~result~"'");
+	}
+
+	test("`foo`", "foo");
+	test("` foo `", "foo");
+	test("`  `", "  ");
+	test("` `` `", "``");
+	test("``foo``", "foo");
+	test("`` foo ``", "foo");
+	test("``  ``", "  ");
+	test("`` ` ``", "`");
+	test("`` ```JS ``", "```JS");
+
+	testFail("`foo``");
+	testFail("``");
+	testFail("```");
+	testFail("````");
+	testFail("``foo`");
+	testFail("``foo```");
 }
 
 private bool parseLink(ref string str, ref Link dst, scope const(LinkRef[string]) linkrefs, scope Attribute[]* attributes)
