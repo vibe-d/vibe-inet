@@ -494,8 +494,8 @@ private enum isJsonLikeWithOpApply(T) = __traits(compiles, () {
 
 private enum isJsonLikeWithByKeyValue(T) = __traits(compiles, () {
 	import std.conv;
-	foreach (string key, T value; T.init.byKeyValue())
-		string r = value.type == T.Type.string ? value.get!string : value.to!string;
+	foreach (item; T.init.byKeyValue())
+		string k = item.key, r = item.value.type == T.Type.string ? item.value.get!string : item.value.to!string;
 } ());
 
 private enum isJsonLike(T) = isJsonLikeWithByKeyValue!T || isJsonLikeWithOpApply!T;
@@ -546,8 +546,8 @@ private string formEncodeImpl(T)(T map, char sep, bool form_encode)
 	size_t len;
 
 	static if (isJsonLikeWithByKeyValue!T){
-		foreach (string key, T value; map.byKeyValue())
-			len += key.length + value.length;
+		foreach (item; map.byKeyValue())
+			len += item.key.length + item.value.length;
 	} else {
 		foreach (string key, T value; map)
 			len += key.length + value.length;
@@ -605,8 +605,8 @@ private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_enc
 		}
 	}
 	static if (isJsonLikeWithByKeyValue!T){
-		foreach (string key, T value; map.byKeyValue())
-			iter(key, value);
+		foreach (item; map.byKeyValue())
+			iter(item.key, item.value);
 	} else {
 		foreach (string key, T value; map)
 			iter(key, value);
