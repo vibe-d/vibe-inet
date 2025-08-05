@@ -355,10 +355,10 @@ void formEncode(R, T)(auto ref R dst, T map, char sep = '&')
 }
 
 /**
-	The following example demonstrates the use of $(D formEncode) with a json map,
-	the ordering of keys will be preserved in $(D Bson) and $(D DictionaryList) objects only.
+	The following example demonstrates the use of $(D formEncode) with an associative array.
+	The ordering of keys will be only preserved when using $(D Bson) and $(D DictionaryList) objects.
  */
-unittest {
+@safe unittest {
 	import std.array : Appender;
 	string[string] map;
 	map["numbers"] = "123456789";
@@ -366,8 +366,18 @@ unittest {
 
 	Appender!string app;
 	app.formEncode(map);
-	assert(app.data == "spaces=1+2+3+4+a+b+c+d&numbers=123456789" ||
-		   app.data == "numbers=123456789&spaces=1+2+3+4+a+b+c+d");
+	assert(app[] == "spaces=1+2+3+4+a+b+c+d&numbers=123456789" ||
+		   app[] == "numbers=123456789&spaces=1+2+3+4+a+b+c+d");
+}
+@safe unittest {
+	import std.array : Appender;
+	DictionaryList!string map;
+	map["numbers"] = "123456789";
+	map["spaces"] = "1 2 3 4 a b c d";
+
+	Appender!string app;
+	app.formEncode(map);
+	assert(app[] == "numbers=123456789&spaces=1+2+3+4+a+b+c+d");
 }
 
 /**
@@ -386,10 +396,12 @@ string formEncode(T)(T map, char sep = '&')
 	return formEncodeImpl(map, sep, true);
 }
 
-/// Ditto
-string formEncode(T : DictionaryList!Args, Args...)(T map, char sep = '&')
-{
-	return formEncodeImpl(map.byKeyValue(), sep, true);
+@safe unittest {
+	DictionaryList!string map;
+	map["numbers"] = "123456789";
+	map["spaces"] = "1 2 3 4 a b c d";
+
+	assert(formEncode(map) == "numbers=123456789&spaces=1+2+3+4+a+b+c+d");
 }
 
 /**
@@ -439,12 +451,16 @@ template isFormMap(T)
 	enum isFormMap = isStringMap!T || isJsonLike!T;
 }
 
-private template isStringMap(T)
-{
-	enum isStringMap = __traits(compiles, () {
-		foreach (string key, string value; T.init) {}
-	} ());
-}
+private enum isStringMapWithOpApply(T) = __traits(compiles, () {
+	foreach (string key, string value; T.init) {}
+} ());
+
+private enum isStringMapWithByKeyValue(T) = __traits(compiles, () {
+	foreach (item; T.init.byKeyValue())
+		string k = item.key, v = item.value;
+} ());
+
+private enum isStringMap(T) = isStringMapWithByKeyValue!T || isStringMapWithOpApply!T;
 
 unittest {
 	static assert(isStringMap!(string[string]));
@@ -453,23 +469,51 @@ unittest {
 		int opApply(int delegate(string key, string value)) { return 0; }
 	}
 	static assert(isStringMap!M);
+	static assert(isStringMapWithOpApply!M);
+	static assert(!isStringMapWithByKeyValue!M);
+
+	static struct R {
+		struct F { string key, value; }
+		F front;
+		bool empty;
+		void popFront() {};
+	}
+	static struct M2 {
+		R byKeyValue() { return R(); }
+	}
+	static assert(isStringMap!M2);
+	static assert(isStringMapWithByKeyValue!M2);
+	static assert(!isStringMapWithOpApply!M2);
 }
 
-private template isJsonLike(T)
-{
-	enum isJsonLike = __traits(compiles, () {
-		import std.conv;
-		string r;
-		foreach (string key, value; T.init)
-			r = value.type == T.Type.string ? value.get!string : value.to!string;
-	} ());
-}
+private enum isJsonLikeWithOpApply(T) = __traits(compiles, () {
+	import std.conv;
+	foreach (string key, T value; T.init)
+		string r = value.type == T.Type.string ? value.get!string : value.to!string;
+} ());
+
+private enum isJsonLikeWithByKeyValue(T) = __traits(compiles, () {
+	import std.conv;
+	foreach (item; T.init.byKeyValue())
+		string k = item.key, r = item.value.type == T.Type.string ? item.value.get!string : item.value.to!string;
+} ());
+
+private enum isJsonLike(T) = isJsonLikeWithByKeyValue!T || isJsonLikeWithOpApply!T;
 
 unittest {
 	import vibe.data.json;
 	import vibe.data.bson;
 	static assert(isJsonLike!Json);
+	static assert(isJsonLikeWithOpApply!Json);
+	static assert(isJsonLikeWithByKeyValue!Json);
+
 	static assert(isJsonLike!Bson);
+	static assert(isJsonLikeWithOpApply!Bson);
+	static assert(isJsonLikeWithByKeyValue!Bson);
+
+	static assert(!isJsonLike!(string[string]));
+	static assert(!isJsonLikeWithOpApply!(string[string]));
+	static assert(!isJsonLikeWithByKeyValue!(string[string]));
 }
 
 private string formEncodeImpl(T)(T map, char sep, bool form_encode)
@@ -479,9 +523,12 @@ private string formEncodeImpl(T)(T map, char sep, bool form_encode)
 	Appender!string dst;
 	size_t len;
 
-	foreach (key, ref value; map) {
-		len += key.length;
-		len += value.length;
+	static if (isStringMapWithByKeyValue!T) {
+		foreach (item; map.byKeyValue())
+			len += item.key.length + item.value.length;
+	} else {
+		foreach (key, ref value; map)
+			len += key.length + value.length;
 	}
 
 	// characters will be expanded, better use more space the first time and avoid additional allocations
@@ -498,9 +545,12 @@ private string formEncodeImpl(T)(T map, char sep, bool form_encode)
 	Appender!string dst;
 	size_t len;
 
-	foreach (string key, T value; map) {
-		len += key.length;
-		len += value.length;
+	static if (isJsonLikeWithByKeyValue!T){
+		foreach (item; map.byKeyValue())
+			len += item.key.length + item.value.length;
+	} else {
+		foreach (string key, T value; map)
+			len += key.length + value.length;
 	}
 
 	// characters will be expanded, better use more space the first time and avoid additional allocations
@@ -514,7 +564,7 @@ private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_enc
 {
 	bool flag;
 
-	foreach (key, value; map) {
+	void iter(string key, string value) {
 		if (flag)
 			dst.put(sep);
 		else
@@ -523,6 +573,13 @@ private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_enc
 		dst.put("=");
 		filterURLEncode(dst, value, null, form_encode);
 	}
+	static if (isStringMapWithByKeyValue!T) {
+		foreach (item; map.byKeyValue())
+			iter(item.key, item.value);
+	} else {
+		foreach (key, value; map)
+			iter(key, value);
+	}
 }
 
 private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_encode)
@@ -530,7 +587,7 @@ private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_enc
 {
 	bool flag;
 
-	foreach (string key, T value; map) {
+	void iter()(string key, auto ref T value) {
 		if (flag)
 			dst.put(sep);
 		else
@@ -546,6 +603,13 @@ private void formEncodeImpl(R, T)(auto ref R dst, T map, char sep, bool form_enc
 				filterURLEncode(dst, value.toString(), null, form_encode);
 
 		}
+	}
+	static if (isJsonLikeWithByKeyValue!T){
+		foreach (item; map.byKeyValue())
+			iter(item.key, item.value);
+	} else {
+		foreach (string key, T value; map)
+			iter(key, value);
 	}
 }
 
