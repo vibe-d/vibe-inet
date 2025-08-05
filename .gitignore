@@ -1,11 +1,13 @@
 .dub
 .vs
 libvibe_core.a
-vibe-core-test-*
+vibe-inet-test-*
 *.exe
 *.lst
 *.obj
 *.sln
+*.a
+*.lib
+*.pdb
 dub.selections.json
-vibe_core.lib
 tests/tests
