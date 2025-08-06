@@ -29,6 +29,17 @@ import std.string;
 */
 void download(HTTPClient_ = void*)(URL url, scope void delegate(scope InputStream) callback, HTTPClient_ client_ = null)
 {
+	download!HTTPClient_(url, (scope str, size) => callback(str), client_);
+}
+/// ditto
+void download(HTTPClient_ = void*)(string url, scope void delegate(scope InputStream) callback, HTTPClient_ client_ = null)
+{
+	download!HTTPClient_(url, (scope str, size) => callback(str), client_);
+}
+/// ditto
+void download(HTTPClient_ = void*)(URL url, scope void delegate(scope InputStream, ulong) callback, HTTPClient_ client_ = null)
+{
+	import std.conv : to;
 	import vibe.http.client;
 
 	assert(url.username.length == 0 && url.password.length == 0, "Auth not supported yet.");
@@ -64,7 +75,12 @@ void download(HTTPClient_ = void*)(URL url, scope void delegate(scope InputStrea
 						done = true;
 						auto istr = res.bodyReader.asInterface!InputStream;
 						scope (exit) destroy(istr);
-						callback(istr);
+						ulong size = ulong.max;
+						if (auto pv = "Content-Length" in res.headers) {
+							try size = to!ulong(*pv);
+							catch (Exception e) logException(e, "Failed to convert Content-Length header to integer");
+						}
+						callback(istr, size);
 						break;
 					case HTTPStatus.movedPermanently:
 					case HTTPStatus.found:
@@ -96,23 +112,57 @@ void download(HTTPClient_ = void*)(URL url, scope void delegate(scope InputStrea
 }
 
 /// ditto
-void download(HTTPClient_ = void*)(string url, scope void delegate(scope InputStream) callback, HTTPClient_ client_ = null)
+void download(HTTPClient_ = void*)(string url, scope void delegate(scope InputStream, ulong) callback, HTTPClient_ client_ = null)
 {
 	download(URL(url), callback, client_);
 }
 
 /// ditto
-void download()(string url, string filename)
+void download()(string url, string filename, scope DownloadProgressCallback on_progress = null)
 {
-	download(url, (scope input){
+	download(url, (scope input, size) {
 		auto fil = openFile(filename, FileMode.createTrunc);
 		scope(exit) fil.close();
-		fil.write(input);
+		scope cs = new ProgStream(fil, on_progress, size);
+		pipe(input, cs, PipeMode.concurrent);
 	});
 }
 
 /// ditto
-void download()(URL url, NativePath filename)
+void download()(URL url, NativePath filename, DownloadProgressCallback on_progress = null)
 {
-	download(url.toString(), filename.toNativeString());
+	download(url.toString(), filename.toNativeString(), on_progress);
+}
+
+struct DownloadProgress {
+	/// Number of bytes transferred so far
+	ulong bytesTransferred;
+	/// Total size of the transferred document - can be `ulong.max` if undetermined
+	ulong bytesTotal = ulong.max;
+}
+
+alias DownloadProgressCallback = bool delegate(DownloadProgress) @safe;
+
+private final class ProgStream : OutputStream {
+	FileStream m_output;
+	DownloadProgressCallback m_callback;
+	DownloadProgress m_progress;
+
+	this(FileStream output, DownloadProgressCallback callback, ulong size)
+	{
+		m_output = output;
+		m_callback = callback;
+		m_progress.bytesTotal = size;
+	}
+
+	override size_t write(scope const(ubyte)[] bytes, IOMode mode) {
+		auto ret = m_output.write(bytes, mode);
+		m_progress.bytesTransferred += ret;
+		if (m_callback) m_callback(m_progress);
+		return ret;
+	}
+	alias write = OutputStream.write;
+
+	void flush() { m_output.flush(); }
+	void finalize() { m_output.flush(); }
 }
