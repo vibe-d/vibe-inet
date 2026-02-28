@@ -158,7 +158,9 @@ private final class ProgStream : OutputStream {
 	override size_t write(scope const(ubyte)[] bytes, IOMode mode) {
 		auto ret = m_output.write(bytes, mode);
 		m_progress.bytesTransferred += ret;
-		if (m_callback) m_callback(m_progress);
+		if (m_callback)
+			if (!m_callback(m_progress))
+				throw new Exception("Download canceled.");
 		return ret;
 	}
 	alias write = OutputStream.write;
