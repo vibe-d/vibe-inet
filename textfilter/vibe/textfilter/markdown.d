@@ -64,7 +64,7 @@ void filterMarkdown(R)(ref R dst, string src, scope MarkdownSettings settings = 
 	Returns the hierarchy of sections
 */
 Section[] getMarkdownOutline(string markdown_source, scope MarkdownSettings settings = null)
-{
+@safe {
 	import std.conv : to;
 
 	if (!settings) settings = new MarkdownSettings;
@@ -76,7 +76,7 @@ Section[] getMarkdownOutline(string markdown_source, scope MarkdownSettings sett
 
 	foreach (ref sb; root_block.blocks) {
 		if (sb.type == BlockType.header) {
-			auto s = &root;
+			auto s = () @trusted { return &root; } ();
 			while (true) {
 				if (s.subSections.length == 0) break;
 				if (s.subSections[$-1].headingLevel >= sb.headerLevel) break;
@@ -114,6 +114,18 @@ final class MarkdownSettings {
 
 	/// Called for every link/image URL to perform arbitrary transformations.
 	string delegate(string url_or_path, bool is_image) urlFilter;
+
+	/** Called for code blocks, allowing to perform syntax highlighting and
+		cross-linking.
+
+		Params:
+			text = The text of the code block as separate lines
+			language = The language specified for the code block, or an empty string
+			sink = Output callback to use for outputting the resulting HTML
+	*/
+	void delegate(scope const(string)[] text, string language,
+		scope void delegate(scope const(char)[]) @safe nothrow sink) @safe nothrow
+		codeFilter;
 
 	/// White list of URI schemas that can occur in link/image targets
 	string[] allowedURISchemas = ["http", "https", "ftp", "mailto"];
@@ -346,6 +358,7 @@ private struct Block {
 	Block[] blocks;
 	size_t headerLevel;
 	Alignment[] columns;
+	string language; // code block language
 }
 
 private struct Attribute {
@@ -545,6 +558,7 @@ pure @safe {
 					}
 					break;
 				case LineType.codeBlockDelimiter:
+					b.language = getCodeBlockLanguage(lines.front.text);
 					lines.popFront(); // TODO: get language from line
 					b.type = BlockType.code;
 					while (!lines.empty) {
@@ -692,7 +706,9 @@ private void writeBlock(R)(ref R dst, ref const Block block, LinkRef[string] lin
 		case BlockType.code:
 			assert (block.blocks.length == 0);
 			put(dst, "<pre class=\"prettyprint\"><code>");
-			foreach (ln; block.text) {
+			if (settings.codeFilter)
+				settings.codeFilter(block.text, block.language, s => dst.put(s));
+			else foreach (ln; block.text) {
 				filterHTMLEscape(dst, ln);
 				put(dst, "\n");
 			}
@@ -794,7 +810,11 @@ private void writeMarkdownEscaped(R)(ref R dst, string ln, in LinkRef[string] li
 				string code;
 				if (parseInlineCode(ln, code)) {
 					put(dst, "<code class=\"prettyprint\">");
-					filterHTMLEscape(dst, code, HTMLEscapeFlags.escapeMinimal);
+					if (settings.codeFilter) {
+						string[1] lines;
+						lines[0] = code;
+						settings.codeFilter(lines, null, s => dst.put(s));
+					} else filterHTMLEscape(dst, code, HTMLEscapeFlags.escapeMinimal);
 					put(dst, "</code>");
 				} else {
 					put(dst, ln[0]);
@@ -1086,6 +1106,14 @@ pure @safe {
 private bool isCodeBlockDelimiter(string ln)
 pure @safe {
 	return ln.stripLeft.startsWith("```");
+}
+
+private string getCodeBlockLanguage(string ln)
+pure  @safe {
+	ln = ln.strip();
+	if (ln.startsWith("```"))
+		ln = ln[3 .. $].stripLeft();
+	return ln;
 }
 
 private string getHtmlTagName(string ln)
