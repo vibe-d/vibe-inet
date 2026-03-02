@@ -124,7 +124,7 @@ final class MarkdownSettings {
 			sink = Output callback to use for outputting the resulting HTML
 	*/
 	void delegate(scope const(string)[] text, string language,
-		scope void delegate(scope const(char)[]) @safe nothrow sink) @safe nothrow
+		scope void delegate(scope const(char)[]) @safe sink) @safe
 		codeFilter;
 
 	/// White list of URI schemas that can occur in link/image targets
@@ -706,9 +706,10 @@ private void writeBlock(R)(ref R dst, ref const Block block, LinkRef[string] lin
 		case BlockType.code:
 			assert (block.blocks.length == 0);
 			put(dst, "<pre class=\"prettyprint\"><code>");
-			if (settings.codeFilter)
-				settings.codeFilter(block.text, block.language, s => dst.put(s));
-			else foreach (ln; block.text) {
+			if (settings.codeFilter) {
+				settings.codeFilter(block.text, block.language,
+					(scope const(char)[] s) @safe => dst.put(s));
+			} else foreach (ln; block.text) {
 				filterHTMLEscape(dst, ln);
 				put(dst, "\n");
 			}
@@ -813,7 +814,8 @@ private void writeMarkdownEscaped(R)(ref R dst, string ln, in LinkRef[string] li
 					if (settings.codeFilter) {
 						string[1] lines;
 						lines[0] = code;
-						settings.codeFilter(lines, null, s => dst.put(s));
+						settings.codeFilter(lines, null,
+							(scope const(char)[] s) @safe => dst.put(s));
 					} else filterHTMLEscape(dst, code, HTMLEscapeFlags.escapeMinimal);
 					put(dst, "</code>");
 				} else {
